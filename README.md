@@ -24,8 +24,19 @@ The Problem Statement was to detecting and recognizing the licence plate of a ca
 - Firstly we have detected a car from a video using the YOLOv3 object detection model.
 - Then we have tracked that car using OpenCV KCF Tracker until it goes out of field of view to avoid repeatation.
 - Then we have detected the number plate of the car from the image taken using Haar Cascade detector.
-
+<p align="center">
+    <img height="250" width="250" src="tracking.gif">
+</p>
+<p align="center">
+    <img height="160" width="120" src="6.jpg">
+    <img height="160" width="120" src="12.jpg">
+    <img height="160" width="120" src="13.jpg">
+    <img height="160" width="120" src="14.jpg">
+    <img height="160" width="120" src="15.jpg">
+</p>
 <br>
 
 ## References:
-- 
+- [Four Point Transformation](https://www.pyimagesearch.com/2014/08/25/4-point-opencv-getperspective-transform-example/)
+- [Object Detection by YOLOv3](https://towardsdatascience.com/object-detection-using-yolov3-and-opencv-19ee0792a420)
+- [Object Tracking OpenCV](https://www.pyimagesearch.com/2018/07/30/opencv-object-tracking/)
