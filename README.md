@@ -20,7 +20,7 @@ The Problem Statement was to detecting and recognizing the licence plate of a ca
 - For predicting the letters we have trained a model for the characters.
 - The Confusion Matrix is shown here
 <p align="center">
-    <img height="250" width="250" src="cm.jpeg">
+    <img height="512" width="512" src="cm.jpeg">
 </p>
 
 ### Video Processing:
@@ -28,7 +28,7 @@ The Problem Statement was to detecting and recognizing the licence plate of a ca
 - Then we have tracked that car using OpenCV KCF Tracker until it goes out of field of view to avoid repeatation.
 - Then we have detected the number plate of the car from the image taken using Haar Cascade detector.
 <p align="center">
-    <img height="250" width="250" src="tracking.gif">
+    <img height="512" width="512" src="tracking.gif">
 </p>
 <p align="center">
     <img height="160" width="120" src="6.jpg">
