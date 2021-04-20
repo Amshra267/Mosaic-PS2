@@ -18,7 +18,10 @@ The Problem Statement was to detecting and recognizing the licence plate of a ca
 
 ### Prediction:
 - For predicting the letters we have trained a model for the characters.
-- **confusion matrix**
+- The Confusion Matrix is shown here
+<p align="center">
+    <img height="250" width="250" src="cm.jpeg">
+</p>
 
 ### Video Processing:
 - Firstly we have detected a car from a video using the YOLOv3 object detection model.
