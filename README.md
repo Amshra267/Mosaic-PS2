@@ -39,6 +39,12 @@ The Problem Statement was to detecting and recognizing the licence plate of a ca
 </p>
 <br>
 
+## Testing:
+- Install the requirements from the requirements.txt file.
+- For segmenting out characters from a plate run the main.py file. It will ask for an image path whrere you provide the path.
+- For tracking vehicles first download the weights and configuration file from [here](https://pjreddie.com/darknet/yolo/). Then run the tracking.py file, provide the video path.
+<br>
+
 ## References:
 - [Four Point Transformation](https://www.pyimagesearch.com/2014/08/25/4-point-opencv-getperspective-transform-example/)
 - [Object Detection by YOLOv3](https://towardsdatascience.com/object-detection-using-yolov3-and-opencv-19ee0792a420)
