@@ -1,15 +1,36 @@
+"""
+   This script contains all the codes for segmenting the Indian number plates
+
+   It contains a hierarchial procedure for extracting very noisy and bad images in Indian number plates
+
+"""
+
 import numpy as np
 import cv2
 import imutils
-import os
-from imutils.perspective import four_point_transform
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from scipy.signal import argrelextrema
+W=320 # width is fixed
 
-# Give this function an image and direction, it will check in that direction and if encounters a white pixel it will make all other remaining pixels in that direction white.
-# ht - horizontal top
-# hb - horizontal bottom
-# vl - vertical left
-# vr - vertical right
+
+
 def fill_dirn(thresh_img, dirn):
+
+    """
+    It is used for filling
+    Give this function an image and direction, it will check in that direction and if encounters a white pixel it will make all other remaining pixels in that direction white.
+
+    Arguments:
+        dirn: direction of filling - includes
+                                        ht - horizontal top
+                                        hb - horizontal bottom
+                                        vl - vertical left
+                                        vr - vertical right
+    Returns:
+        Filled image along a particular direction
+    
+    """
     thresh_x = thresh_img.copy()
     if dirn == "ht":
         for dirn_i in range(thresh_img.shape[1]):
@@ -41,167 +62,203 @@ def fill_dirn(thresh_img, dirn):
     
     return thresh_x.astype("uint8")
 
-# find area of max area contour
-def find_cnta(thresh_img):
-    cnts_t, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cnts_t = sorted(cnts_t, key= cv2.contourArea, reverse = True)
-    return cv2.contourArea(cnts_t[0])
 
-# provides the approx which includes the plate.
-# If it can't detect the plate and can't fulfil the area constraint, it will return the approx of whole image
+def smooth_data_convolve_my_average(arr, span):                                ## Function for smoothing the curve 
+    re = np.convolve(arr, np.ones(span * 2 + 1) / (span * 2 + 1), mode="same")
+
+    # The "my_average" part: shrinks the averaging window on the side that 
+    # reaches beyond the data, keeps the other side the same size as given 
+    # by "span"
+    re[0] = np.average(arr[:span])
+    for i in range(1, span + 1):
+        re[i] = np.average(arr[:i + span])
+        re[-i] = np.average(arr[-i - span:])
+    return re
+
+def v_projection_or_bruteforce_trimming(img, half_detected = True, min=None):       # Our novel proposed and implemeted approach for bigger noiser data
+                                                                                    # But this approach have some false positive which can be addressed 
+                                                                                    # in future if we get more time,
+    """
+    This function is used for divind a giving image into subparts if multiple letters are present else return the same image
+    """
+    h, w = img.shape
+    combined_list = [0] # list contains max and intial and final
+    split_imgs = []
+    #vertical_projection
+    col_pix_count = np.sum(img, axis = 0)
+  # Using moving average method with scipy lowess to find the maxima and reduce noise to cut the parts,-----------
+    maxs = argrelextrema(smooth_data_convolve_my_average(col_pix_count, 3), np.less)[0]
+    combined_list.extend(maxs)
+    combined_list.append(w-1)
+   # print(combined_list)
+    if len(maxs)==0:
+        return [img]
+
+    elif half_detected: # if segmentation is half done already then
+        filtered_list = [0]
+        i=0
+        j = 0
+     #   print("Minimum : ",min)
+        if combined_list[-1]<=min:
+            return [img]
+        if combined_list[-1]>40:
+            min = 17
+        while((i < len(combined_list)-1) and (i+j < len(combined_list)-1)):
+            diff = -(combined_list[i]-combined_list[i+1+j])
+            if diff<=min:
+                j+=1
+            else:
+                if -(combined_list[i+j+1]-combined_list[-1])<min:
+                    filtered_list.append(combined_list[-1])
+                    break
+                filtered_list.append(combined_list[i+j+1])
+                i+=j+1
+                j=0
+                
+    else:
+        filtered_list = [0]
+        i=0
+        j = 0
+        min=10
+        while((i < len(combined_list)-1) and (i+j < len(combined_list)-1)):
+            diff = -(combined_list[i]-combined_list[i+1+j])
+            if diff<=min:
+                j+=1
+            else:
+                if -(combined_list[i+j+1]-combined_list[-1])<min:
+                    filtered_list.append(combined_list[-1])
+                    break
+                filtered_list.append(combined_list[i+j+1])
+                i+=j+1
+                j=0
+
+   # print(filtered_list)
+    #plt.plot(col_pix_count, color = "b")
+    #plt.plot(smooth_data_convolve_my_average(col_pix_count, 3), color = "r")
+    #plt.show()
+    for i in range(len(filtered_list)-1):
+        split_imgs.append(img[:,filtered_list[i]: filtered_list[i+1]])
+    return split_imgs
+
 def extract_plate(gray):
+    """
+    this function provides the approx polyDP coordinates which includes the plate.
+    If it can't detect the plate and can't fulfil the area constraint, it will return the approx of whole image
 
-    _ ,binary = cv2.threshold(gray, 0, 255, cv2.THRESH_OTSU | cv2.THRESH_BINARY)
-    cv2.imshow("Binary1", binary)
-    binary = check_h_border(binary)
-    binary = check_v_border(binary)
-    binary = cv2.copyMakeBorder(binary, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=255)
+    Arguments:
+           gray: Grayscale image
+    
+    Retuens:
+          approx points along with binary thresholded image
+    
+    """
 
+    h1, w1 = gray.shape
+    dilated_img = cv2.dilate(gray, np.ones((7, 7), np.uint8))
+    bg_img = cv2.bilateralFilter(dilated_img, 11, 17, 17)  #using median blur to remove the undesired shadow along with abs difference and normalization
+    diff_img = 255 - cv2.absdiff(gray, bg_img)
+    norm_img = cv2.normalize(diff_img,None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8UC1)
+    ret,binary1 = cv2.threshold(norm_img, 100, 255, cv2.THRESH_OTSU | cv2.THRESH_BINARY)
+#     binary = check_h_border(binary)
+#     binary1 = check_v_border(binary)
+    binary = cv2.bitwise_not(binary1)
+#     cv2.imshow("BINARY", binary)
+    
+    """ NOW we will use the vertical filling to determine the effective area of number plate """
 
-    binary = cv2.bitwise_not(binary)
-    cv2.imshow("BINARY", binary)
-    H = cv2.Sobel(binary, cv2.CV_8U, 0, 2)
+    ### ----------------------------------------Firstly calculating and using vertival sobel---------------------------------#####
+   
     V = cv2.Sobel(binary, cv2.CV_8U, 2, 0)
-
-    rows,cols = gray.shape[:2]
-
+    V= cv2.dilate(V, np.ones((3,2), np.uint8), iterations =1)
     contours,_ = cv2.findContours(V, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     for cnt in contours:
         (x,y,w,h) = cv2.boundingRect(cnt)
         # rows/3 is the threshold for length of line
-        if h > rows/3:
+        if h > h1/4:
             cv2.drawContours(V, [cnt], -1, 255, -1)
             cv2.drawContours(binary, [cnt], -1, 255, -1)
         else:
             cv2.drawContours(V, [cnt], -1, 0, -1)
-
-    contours,_ = cv2.findContours(H, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-    for cnt in contours:
-        (x,y,w,h) = cv2.boundingRect(cnt)
-        # cols/3 is the threshold for length of line
-        if w > cols/3:
-            cv2.drawContours(H, [cnt], -1, 255, -1)
-            cv2.drawContours(binary, [cnt], -1, 255, -1)
-        else:
-            cv2.drawContours(H, [cnt], -1, 0, -1)
-    cv2.imshow("SOBEL", V)
+    
+    
+#     cv2.imshow("Sobel", V)
     kernel = cv2.getStructuringElement(shape=cv2.MORPH_RECT, ksize=(3,3))
-    H = cv2.morphologyEx(H, cv2.MORPH_DILATE, kernel,iterations = 3)
     V = cv2.morphologyEx(V, cv2.MORPH_DILATE, kernel, iterations = 3)
-
     thresh_vr = fill_dirn(V, "vr")
     thresh_vl = fill_dirn(V, "vl")
-    thresh_ht = fill_dirn(H, "ht")
-    thresh_hb = fill_dirn(H, "hb")
     thresh_v = cv2.bitwise_and(thresh_vl, thresh_vr)
-    thresh_h = cv2.bitwise_and(thresh_ht, thresh_hb)
-    thresh_xx = cv2.bitwise_and(thresh_h, thresh_v)
     #cv2.imshow("THRESH_V", thresh_v)
-    nnx = np.zeros(thresh_xx.shape, np.uint8)
+    nnx = np.zeros(thresh_v.shape, np.uint8)
     cnts = cv2.findContours(thresh_v, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
     c = sorted(cnts, key=cv2.contourArea, reverse=True)
-    #print(len(c))
     if len(c)==0:
-        approx_f = np.array([[[0, 0]], [[cols, 0]], [[cols, rows]], [[0, rows]]])
-        return approx_f
+        approx_f = np.array([[[0, 0]], [[w1, 0]], [[w1, h1]], [[0, h1]]])
+        return approx_f, binary1
     else:
         c = c[0]
+    coordi2 = cv2.boundingRect(c)
+    width_v = coordi2[2]
     hull = cv2.convexHull(c, False)
     cv2.drawContours(nnx, [hull], 0, 255, -1, 8)
     cv2.drawContours(nnx, [hull], 0, 255, 5, 8)# after getting the mask extending its boundary to get a bigger area
-    cv2.imshow("NNX", nnx)
+#     cv2.imshow("NNX", nnx)
+    
+    ###----------------For H-SOBEL----------------------------------------
+    H = cv2.Sobel(binary, cv2.CV_8U, 0, 2)
+    H= cv2.dilate(H, np.ones((2,3), np.uint8), iterations =1)
+    thresh_ht = fill_dirn(H, "hb")
+    thresh_hb = fill_dirn(H, "ht")
+    thresh_h = cv2.bitwise_and(thresh_ht, thresh_hb)
+    cnts = cv2.findContours(thresh_h, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    cnts = sorted(cnts, key = cv2.contourArea, reverse  =True)[0]
+    coordi = cv2.boundingRect(cnts)
+    width_h = coordi[2]
+    cv2.rectangle(thresh_h, (coordi[0], coordi[1]), (coordi[0]+coordi[2], coordi[1]+coordi[3]), 255, -1)
+#     cv2.imshow("Sobel-H", H)
+#     cv2.imshow("thresh_h", thresh_h)
+
+   ##-------------------------------------------------------------------------
+
+
+   #####------------------Taking help of both V and H sobel to get the resultant nxx mask----------------
+    
+#     print(width_v/width_h)
+    if width_v/width_h < 0.6: ## if width relativeness less than 0.6 so detect bigger width
+        cv2.rectangle(nnx,  (coordi[0], coordi2[1]), (coordi2[0]+coordi2[2], coordi2[1]+coordi2[3]), 255, -1)
+
+#     cv2.imshow("nnx", nnx)
     nnx_dst = nnx.copy()
-    print("HULL LENGTH: ", len(hull))
-    # Tried cornerHarris but its not working properly
-    # dst = cv2.cornerHarris(nnx, 5, 5, 0.1)
-    # dst = cv2.dilate(dst, None)
-    # nnx_dst[dst>0.01*dst.max()]=255
-    # cv2.imshow("HARRIS", nnx_dst)
-    # print("CORNER HARRIS: ", len(dst))
-    # In the final mask of the plate calculating the approx, minAreaRect will not be much suitable
     cnts, _ = cv2.findContours(nnx, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     c = sorted(cnts, key=cv2.contourArea, reverse=True)
     if len(c)==0:
-        approx_f = np.array([[[0, 0]], [[cols, 0]], [[cols, rows]], [[0, rows]]])
-        return approx_f
+        approx_f = np.array([[[0, 0]], [[w1, 0]], [[w1, h1]], [[0, h1]]])
+        return approx_f, binary1
     else:
         c = c[0]
-    approx_f = cv2.approxPolyDP(c, 0.06*cv2.arcLength(c, True), True)# Tested on different images 0.06 is suitable for most of them
-    
+    approx_f = cv2.approxPolyDP(c, 0.05*cv2.arcLength(c, True), True)# Tested on different images 0.06 is suitable for most of them
+   # print("Approx_f :",len(approx_f))
     if len(approx_f)==4:
         # If rectangle detected
         print("RECT DETECTED SUCCESSFULLY")
     else:
         # If mask detected but rect not detected returning bounding rect of mask (can be changed to minAreaRect)
-        re = cv2.boundingRect(c)
+        re  = cv2.boundingRect(c)
         cv2.rectangle(nnx_dst, (re[0], re[1]), (re[0]+re[2], re[1]+re[3]), 255, -1)
         cnts, _ = cv2.findContours(nnx_dst, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         c = sorted(cnts, key=cv2.contourArea, reverse=True)[0]
-        approx_f = cv2.approxPolyDP(c, 0.06*cv2.arcLength(c, True), True)
-    if cv2.contourArea(c)<(0.2*rows*cols):
+        approx_f = cv2.approxPolyDP(c, 0.05*cv2.arcLength(c, True), True)
+        if len(approx_f!=4):
+            approx_f = np.array([[[0, 0]], [[w1, 0]], [[w1, h1]], [[0, h1]]])
+        
+
+    if cv2.contourArea(c)<(0.2*w1*h1):
         # If mask not detected returns approx of whole image
-        approx_f = np.array([[[0, 0]], [[cols, 0]], [[cols, rows]], [[0, rows]]])
-    return approx_f
+        approx_f = np.array([[[0, 0]], [[w1, 0]], [[w1, h1]], [[0, h1]]])
+    return approx_f, binary1
 
-
-
-
-def approx_update(aprx):
-    k = 5
-    aprx[0][0][1] = aprx[0][0][1]-k
-    aprx[0][0][0] = aprx[0][0][0]-k
-    aprx[1][0][1] = aprx[1][0][1]+(k+5)
-    aprx[1][0][0] = aprx[1][0][0]-(k+5)
-    aprx[2][0][1] = aprx[2][0][1]+k
-    aprx[2][0][0] = aprx[2][0][0]+k
-    aprx[3][0][1] = aprx[3][0][1]-k
-    aprx[3][0][0] = aprx[3][0][0]+k
-    return aprx
-
-# 1st gamma correction method (not working properly)
-def linear_stretching(input, lower_stretch_from, upper_stretch_from):
-    """
-    Linear stretching of input pixels
-    :param input: integer, the input value of pixel that needs to be stretched
-    :param lower_stretch_from: lower value of stretch from range - input
-    :param upper_stretch_from: upper value of stretch from range - input
-    :return: integer, integer, the final stretched value
-    """
-
-    lower_stretch_to = 0  # lower value of the range to stretch to - output
-    upper_stretch_to = 255  # upper value of the range to stretch to - output
-
-    output = (input - lower_stretch_from) * ((upper_stretch_to - lower_stretch_to) / (upper_stretch_from - lower_stretch_from)) + lower_stretch_to
-
-    return output
-
-def gamma_correction(moon):
-    """
-    Restore the contrast in the faded image using linear stretching.
-    """
-
-    # assign variable to max and min value of image pixels
-    max_value = np.max(moon)
-    min_value = np.min(moon)
-
-    # cycle to apply linear stretching formula on each pixel
-    for y in range(len(moon)):
-        for x in range(len(moon[y])):
-            moon[y][x] = linear_stretching(moon[y][x], min_value, max_value)
-    return moon
-
-# 2nd gamma correction method, increase illumination
-def adjust_gamma(image, gamma=1.0):
-	# build a lookup table mapping the pixel values [0, 255] to
-	# their adjusted gamma values
-	invGamma = 1.0 / gamma
-	table = np.array([((i / 255.0) ** invGamma) * 255
-		for i in np.arange(0, 256)]).astype("uint8")
-	# apply gamma correction using the lookup table
-	return cv2.LUT(image, table)
 
 def check_h_border(thresh_img):
     n_row, n_column = thresh_img.shape
@@ -276,52 +333,107 @@ def check_v_border(thresh_img):
 
     return thresh_img
 
-def extraction(image):
 
-    # in case of a rear view of whole car take roi of the plate portion, in case of only plate take roi of whole image
-    image = cv2.resize(image, (320, 240))
+def order_points(pts):
+	# initialzie a list of coordinates that will be ordered
+	# such that the first entry in the list is the top-left,
+	# the second entry is the top-right, the third is the
+	# bottom-right, and the fourth is the bottom-left
+	rect = np.zeros((4, 2), dtype = "float32")
+	# the top-left point will have the smallest sum, whereas
+	# the bottom-right point will have the largest sum
+	s = pts.sum(axis = 1)
+	rect[0] = pts[np.argmin(s)]
+	rect[2] = pts[np.argmax(s)]
+	# now, compute the difference between the points, the
+	# top-right point will have the smallest difference,
+	# whereas the bottom-left will have the largest difference
+	diff = np.diff(pts, axis = 1)
+	rect[1] = pts[np.argmin(diff)]
+	rect[3] = pts[np.argmax(diff)]
+	# return the ordered coordinates
+	return rect
+
+
+def four_point_transform(image, pts):
+    # obtain a consistent order of the points and unpack them
+    # individually
+    pts=  pts.reshape(4,2)
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+    # compute the width of the new image, which will be the
+    # maximum distance between bottom-right and bottom-left
+    # x-coordiates or the top-right and top-left x-coordinates
+    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+    maxWidth = max(int(widthA), int(widthB))
+    # compute the height of the new image, which will be the
+    # maximum distance between the top-right and bottom-right
+    # y-coordinates or the top-left and bottom-left y-coordinates
+    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    maxHeight = max(int(heightA), int(heightB))
+    # now that we have the dimensions of the new image, construct
+    # the set of destination points to obtain a "birds eye view",
+    # (i.e. top-down view) of the image, again specifying points
+    # in the top-left, top-right, bottom-right, and bottom-left
+    # order
+    dst = np.array([
+        [0, 0],
+        [maxWidth - 1, 0],
+        [maxWidth - 1, maxHeight - 1],
+        [0, maxHeight - 1]], dtype = "float32")
+    # compute the perspective transform matrix and then apply it
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, M, (maxWidth-1, maxHeight-1), flags = cv2.INTER_AREA)
+    # return the warped image
+    return warped
+  
+
+def sort_x(cnt):
+    """
+    Retuening the width value of a contour for sorting
+    """
+    return cnt[0]
+
+def extraction(path):
+    """
+    Final generator type function for detecting the plate and combining all helper functions to segment the letters
+    """
+
+    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    h, w = image.shape[:2]
+    H = int(W*h/w)
+    image = cv2.resize(image, (W, H), cv2.INTER_AREA)
     image = cv2.normalize(image, image, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-   # r = cv2.selectROI("ROI", image, showCrosshair=False, fromCenter=False)
-   # image = image[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])]
-    #image = cv2.resize(image, (320, 240))
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    cv2.imshow("GRAY", gray)
     # Plate Exatraction
-    aprx_f = extract_plate(gray.copy())
-    #approx_f = approx_update(approx_f)
-    nnx_f = np.zeros(gray.shape, np.uint8)
+    aprx_f, binary = extract_plate(gray.copy())
+    
+    nnx_f = np.zeros(binary.shape, np.uint8)
     nnx_f = cv2.drawContours(nnx_f, [aprx_f], 0, 255, -1)
-    cv2.imshow("NNX_F", nnx_f)
-    wraped = cv2.bitwise_and(gray, gray, mask = nnx_f)
-    
-    # Four point Transform (approx_f should be reshaped in size (4, 2))
-    wraped = four_point_transform(wraped, aprx_f.reshape(4, 2))
-    cv2.imshow("Wraped", wraped)
-    #wraped = cv2.resize(wraped, (320, 240))
-    # Normalize image
-    #norm = cv2.normalize(wraped, wraped, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    #cv2.imshow("NORM", norm)
+#     cv2.imshow("NNX_F", nnx_f)
+    wraped = cv2.bitwise_and(binary, binary, mask = nnx_f)
 
-    # Gamma adjustment and Thresholding ((80, 100) is better range)
-    #wraped = adjust_gamma(wraped, gamma=1.5)
-    blurred = cv2.GaussianBlur(wraped, (5, 5), 0)
-    ret, thresh = cv2.threshold(wraped, 80, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    # Four point Transform
+    wraped = four_point_transform(wraped, aprx_f)
 
-    
+#     bg_img = cv2.bilateralFilter(wraped, 13, 15, 15)  #using median blur to remove the undesired shadow along with abs difference and normalization
+#     _, thresh = cv2.threshold(bg_img, 110, 255, cv2.THRESH_BINARY|cv2.THRESH_OTSU)
+    thresh_n = wraped.copy()
 
-    # Detecting contours of characters and filling their inside spaces and drawing contours in another black region which filters out noise
-    thresh_n = thresh.copy()
-    #thresh_n = cv2.erode(thresh_n, np.zeros((3, 3), np.uint8), iterations=1)
+#     cv2.imshow("wraped", wraped)
     thresh_n = cv2.copyMakeBorder(thresh_n, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=255)
-    cnts, _ = cv2.findContours(thresh_n, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, _ = cv2.findContours(thresh_n, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
     thresh_nn = np.zeros(thresh_n.shape, np.uint8)
     rects = []
     for i, c in enumerate(cnts):
         rect_t = cv2.boundingRect(c)
-        if (rect_t[2]*rect_t[3])<(0.1*480*360) and (rect_t[2]*rect_t[3])>500:
+        if ((rect_t[2]*rect_t[3])<(0.7*w*h) and (rect_t[2]*rect_t[3])>160) and rect_t[2]>10:
             thresh_nn = cv2.drawContours(thresh_nn, [c], 0, 255, -1)
-            print(rect_t[2]*rect_t[3])
+         #   print(rect_t[2]*rect_t[3])
     
     # From the previous black region detecting bonding rects and cropping that portion from the previous threshold image (thresh_n)
     # This time tere will be only one contour for a character at max because its inside region is filled
@@ -329,35 +441,83 @@ def extraction(image):
     cnts, _ = cv2.findContours(thresh_nn, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
     rects = []
+    print("Contours : ",len(cnts))
     for c in cnts:
         rect_t = cv2.boundingRect(c)
-        if (rect_t[2]*rect_t[3])<(0.08*480*360) and (rect_t[2]*rect_t[3])>500:
+        if ((rect_t[2]*rect_t[3])<(0.7*w*h) and (rect_t[2]*rect_t[3])>160) and (rect_t[2]>10):
+#             print(rect_t[2]*rect_t[3])
             rects.append(rect_t)
 
-    # Sowing the extracted rects
-    for ind, rect_t in enumerate(rects):
-        # Get the 4 points of the bounding rectangle
-        x, y, w, h = rect_t
-        # Draw a straight rectangle with the points
-        s = thresh_n[y:(y+h), x:(x+w)]
-        cv2.imshow(str(ind), s)
-        yield s
+    #-------------------Now return the characters if segmented else applying further cutting -----------#
+    chars = []
+    if len(rects)!=0:  # means at least some characters detected
+
+        rects = sorted(rects, key = sort_x)
+
+       #Appraoch-2 here starts the second hierarchial approach after normal sobel technique
+        widths = np.array([rect[2] for rect in rects])
+        median = np.median(widths[np.argsort(widths)])
+        # Sowing the extracted rects
+        for ind, rect_t in enumerate(rects):
+            # Get the 4 points of the bounding rectangle
+            x, y, w, h = rect_t
+            # Draw a straight rectangle with the points
+#             cv2.imshow("THRESH_NN", thresh_nn)
+            s = thresh_n[y:(y+h), x:(x+w)]
+            s = cv2.bitwise_not(s)
+            trimmed = v_projection_or_bruteforce_trimming(s, half_detected = True, min = median)
+            
+            for trim in trimmed:
+                h1, w1 = trim.shape
+                if h1>w1:
+                    diff = h1-w1
+                    trim = cv2.copyMakeBorder(trim, 4, 4, 2, 2, cv2.BORDER_CONSTANT, value=0)
+                else:
+                    diff = w1-h1
+                    trim = cv2.copyMakeBorder(trim, 2, 2, 4, 4, cv2.BORDER_CONSTANT, value=0)
+
+                trim = cv2.resize(trim, (64,64), cv2.INTER_AREA)
+                #trim = cv2.erode(trim, np.ones((2,2), np.uint8), iterations = 1)
+                chars.append(trim)
+#                 cv2.imshow("final", cv2.bitwise_not(cv2.bitwise_and(binary, binary, mask = nnx_f)))
+            
+    else:
+        ## -----Here we will use the concept of minimum extraction to reove the plates--------------##
+        h,w = thresh_n.shape
+        
+        final = cv2.bitwise_not(cv2.bitwise_and(binary, binary, mask = nnx_f))
+        final = four_point_transform(final, aprx_f)
+#         cv2.imshow("final", final)
+        trimmed = v_projection_or_bruteforce_trimming(final, half_detected = False)
+        for trim in trimmed:
+            h1, w1 = trim.shape
+            if h1>w1:
+                diff = h1-w1
+                trim = cv2.copyMakeBorder(trim, 4, 4, 2, 2, cv2.BORDER_CONSTANT, value=0)
+            else:
+                diff = w1-h1
+                trim = cv2.copyMakeBorder(trim, 2, 2, 4, 4, cv2.BORDER_CONSTANT, value=0)
+            
+            trim = cv2.resize(trim, (64,64), cv2.INTER_AREA)
+          #  trim = cv2.erode(trim, np.ones((2,2), np.uint8), iterations = 1)
+            chars.append(trim)
+#     cv2.imshow("original", image)
+    return chars
+
+
 
 if __name__ == '__main__':
-    path = input("Path: \n")
-    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-    
-    
-    # in case of a rear view of whole car take roi of the plate portion, in case of only plate take roi of whole image
-    
 
+    extraction(input("Path: \n"))
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    """
+    SP(1 L)
+    Y
+    Y
+    SP
+    SP
+    Y
+    SP
 
-    # #cv2.imshow("EDGED", edged)
-    # cv2.imshow("THRESH", thresh)
-    # cv2.imshow("THRESH_N", thresh_n)
-    # cv2.imshow("THRESH_NN", thresh_nn)
-    # #cv2.imshow("Wraped", wraped)
-    # cv2.imshow("BLURRED", blurred)
-    # cv2.imshow("original", image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    """

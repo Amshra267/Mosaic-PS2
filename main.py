@@ -21,6 +21,32 @@ mapping= {
 model = load_model("model.h5")
 
 
+def convention(predictions, length):
+    """
+    Function for implementimg the convention of Indian plates
+    """
+    cls = np.argmax(predictions, axis = 1)
+    for i in [0,1]: # first 2 district code must represent letters
+        if cls[i]==0:
+            cls[i]= 24
+        # else:
+        #     print(np.argmax(predictions[i,10:]))
+        #     cls[i] = 10+np.argmax(predictions[i,10:])
+    for i in [-4,-3,-2,-1]: # last 4 numbers
+        if cls[i]== 24:
+            cls[i]=0
+        # else:
+        #     cls[i] = np.argmax(predictions[i,:10])
+    diff = length-6
+    for i in range(2, 2+diff):
+        if i in [2,3]: # registration no.
+            if cls[i]==24:
+                cls[i]=0
+            # else:
+            #     cls[i] = np.argmax(predictions[i,:10])
+    word = [mapping[predict] for predict in cls]
+    return word
+
 if __name__=="__main__":
     print("Enter the path of input image")
 
@@ -31,32 +57,33 @@ if __name__=="__main__":
             continue
         break
 
-    img = cv2.imread(path)
- #   img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+ 
     ## resizing image with proper aspect ratio------------
-    image_gen  = extraction(img) ## GENERATOR CALLED
-    i=0
-    word = []
-    while True:
-        try:
-            image = next(image_gen)
-            print(image.shape)
-            # image = image.reshape(-1,28,28,1).astype("float32")/255
-    
-            # prediction = model(image)
-            # cls = np.argmax(prediction, axis = 1)
-            # print(cls)
-            # print(prediction[0, cls])
-            
-            # word.append(mapping[cls[0]])
-            cv2.imshow("imgs" + str(i), image)
-            i+=1
-        except Exception as e:
-            print(e)
-            break
+    imgs  = extraction(path) ## GENERATOR CALLED
+    imgs = np.asarray(imgs)
+    imgs = imgs.reshape(-1,64,64,1).astype("float32")/255
+    if len(imgs)<6:
+        predictions = model(imgs)
+        cls = np.argmax(predictions, axis = 1)
+        print(cls)
+        word = [mapping[classes] for classes in cls]
+    elif len(imgs)<8:
+        predictions = model(imgs)
+        word = convention(predictions, len(predictions))
+    else:
+        predictions = model(imgs)
+        cls = np.argmax(predictions, axis = 1)
+        word = convention(predictions, len(predictions))
+        
+    # print(prediction)
+        
+    for i in range(len(imgs)):
+        cv2.imshow("imgs" + str(i), imgs[i,:,:])
+        
+
 
     #------------Resizing_finished--------------
-    #print(" ".join(word))
+    print("".join(word))
 
     #cv2.imshow("extract", img)
      
